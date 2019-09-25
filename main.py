@@ -63,43 +63,39 @@ async def client(session, url, sem, headers):
         return {'status': False, 'data': None}
 
 
-async def productr(Headers, sem, urls, waitToAnalysis):
+async def productr(Headers, sem, urls, waitToAnalysis, log):
     async with aiohttp.ClientSession() as session:
         while True:
-            # try:
-            global productr_switch
-            # urls存在url
-            if (len(urls) != 0):
-                item = urls.popitem()
-                webType = item[1]
-                url = item[0]
-                headers = Headers.build()
-                result = await client(session, url, sem, headers)
-                # log.debug('{}'.format(result['data']))
-                if result['status']:
-                    waitToAnalysis.append({
-                        'data': result['data'],
-                        'type': webType
-                    })
-                    # log.debug('{}数据获取成功,已添加进Queue1!'.format(url))
+            try:
+                global productr_switch
+                if (len(urls) != 0):
+                    item = urls.popitem()
+                    webType = item[1]
+                    url = item[0]
+                    headers = Headers.build()
+                    result = await client(session, url, sem, headers)
+                    if result['status']:
+                        waitToAnalysis.append({
+                            'data': result['data'],
+                            'type': webType
+                        })
+                        log.debug('{}数据获取成功,已添加进队列待解析'.format(url))
+                    else:
+                        urls[url] = webType
+                        log.debug('url:{}抓取失败，返回队列等待重新抓取'.format(url))
+                        continue
+                # TODO: 处理任务结束
+                elif productr_switch:
+                    log.debug('任务结束,停止爬取!')
+                    break
                 else:
-                    urls[url] = webType
+                    await asyncio.sleep(2)
+                    log.debug('url池为空，继续等待..')
                     continue
-            # 读写完最后一个文件时,开关为True
-            elif productr_switch:
-                # log.debug('任务结束,停止爬取!')
-                break
-            # urls不存在url
-            else:
-                print(len(urls))
-                await asyncio.sleep(2)
-                print('继续')
+            except Exception as e:
+                log.error('爬取数据失败!url为{},原因是{}'.format(url, e))
+                urls.append({'data': url, 'type': webType})
                 continue
-        # except Exception as e:
-        # log.error('爬取数据失败!url为{},原因是{}'.format(url,e))
-        # urls.append({'data':url,'type':webType})
-        # print(e)
-        # continue
 
 
 async def analysisr(waitToAnalysis, waitToWrite, urls, host):
@@ -152,29 +148,28 @@ async def analysisr(waitToAnalysis, waitToWrite, urls, host):
 
 async def writer(waitToWrite, Headers):
     # async with aiohttp.ClientSession as session:
-        while True:
-            try:
-                if (len(waitToWrite) != 0):
-                    item = waitToWrite.pop()
-                    print(item)
-                    if (item['type'] == 'article'):
-                        async with aiofiles.open(item['name'] + '.txt',
-                                                 'w+') as f:
-                            await f.writelines(item['data'])
-                            # log.debug('{}写入文件完成!'.format(item['name']))
-                    else:
-                        headers = Headers.build()
-                        if (item['type'] == 'img'):
-                            pass
-                        elif (item['type'] == 'video'):
-                            pass
+    while True:
+        try:
+            if (len(waitToWrite) != 0):
+                item = waitToWrite.pop()
+                print(item)
+                if (item['type'] == 'article'):
+                    async with aiofiles.open(item['name'] + '.txt', 'w+') as f:
+                        await f.writelines(item['data'])
+                        # log.debug('{}写入文件完成!'.format(item['name']))
                 else:
-                    await asyncio.sleep(2)
-                    print('write继续')
-                    continue
-            except Exception as e:
-                # log.error('无法从队列获取数据,原因是{}'.format(e))
+                    headers = Headers.build()
+                    if (item['type'] == 'img'):
+                        pass
+                    elif (item['type'] == 'video'):
+                        pass
+            else:
+                await asyncio.sleep(2)
+                print('write继续')
                 continue
+        except Exception as e:
+            # log.error('无法从队列获取数据,原因是{}'.format(e))
+            continue
 
 
 # 定义每个线程中的协程
@@ -189,15 +184,15 @@ def main(loop):
 if __name__ == "__main__":
     baseDir = os.path.dirname(os.path.abspath(__file__))
     # 定义日志
-    # log = setLog(baseDir, 'logConfig.yaml')
+    log = setLog(baseDir, 'logConfig.yaml')
     # 定义配置文件
-    # config = setConfig(baseDir, 'config.yaml', log)
+    config = setConfig(baseDir, 'config.yaml', log)
     # 定义信号量
-    # sem = asyncio.Semaphore(config['semaphore']['num'])
-    sem = 100
+    sem = asyncio.Semaphore(config['semaphore']['num'])
     # log.debug("加载信号量信息成功, 当前信号量为{}".format(config['semaphore']['num']))
-    # host = config['website']['host']
-    host = 'news.sise.edu.cn'
+    host = config['website']['host']
+    # 初始化头部类
+    Headers = buildHeader("http://" + host)
     # 未爬取url
     urls = dict()
     # 添加第一批url
@@ -206,10 +201,6 @@ if __name__ == "__main__":
         # http://news.sise.edu.cn/cms/news/1.html
         urls['http://news.sise.edu.cn/cms/news/{}.html'.format(
             str(i))] = 'column'
-    # 创建Queue
-
-    # 创建header
-    Headers = buildHeader("http://" + host)
     # 创建一个协程
     product_loop = asyncio.new_event_loop()
     analysis_loop = asyncio.new_event_loop()
@@ -219,31 +210,23 @@ if __name__ == "__main__":
     tProducter = threading.Thread(target=main,
                                   name='product',
                                   args=(product_loop, ))
-    # tProducter = threading.Thread(target=main, name='product', args=(productr, thread_loop, Headers, sem, log, q1, url,))
     # 解析消费者线程
     tAnalysisr = threading.Thread(target=main,
                                   name='analysis',
                                   args=(analysis_loop, ))
-    # tAnalysisr = threading.Thread(target=main, name='analysis', args=(analysisr, thread_loop, host, log, q1, q2, url,))
     # 写入消费者线程
     tWriter = threading.Thread(target=main, name='writer', args=(write_loop, ))
-    # tWriter = threading.Thread(target=main, name='writer', args=(writer, thread_loop, Headers, log, q2,))
     tProducter.setDaemon = True
     tAnalysisr.setDaemon = True
     tWriter.setDaemon = True
     # 执行线程
     tProducter.start()
-    # tProducter.join()
     tAnalysisr.start()
     tWriter.start()
     array1 = list()
     array2 = list()
-    # urls, Headers, sem, log, waitToAnalysis
-    asyncio.run_coroutine_threadsafe(productr(Headers, sem, urls, array1),
+    asyncio.run_coroutine_threadsafe(productr(Headers, sem, urls, array1, log),
                                      product_loop)
-    # urls, Headers, sem, waitToAnalysis
-    # waitToAnalysis, log, waitToWrite, urls, host
     asyncio.run_coroutine_threadsafe(analysisr(array1, array2, urls, host),
                                      analysis_loop)
-    # log, waitToWrite, Headerss
     asyncio.run_coroutine_threadsafe(writer(array2, Headers), write_loop)
