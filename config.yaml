@@ -1,3 +1,5 @@
 version: 1
 semaphore: 
-  num: 10
+  num: 1000
+website:
+  host: news.sise.edu.cn

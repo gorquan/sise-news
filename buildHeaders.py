@@ -70,4 +70,16 @@ class buildHeader(object):
             "Pragma": "no-cache",
             "User-Agent": self.__user_agent
         }
+        headers = {
+            "Accept":
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language":
+            "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-CN;q=0.6",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Host": "news.sise.edu.cn",
+            "Pragma": "no-cache",
+            "User-Agent": "Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/535.24 (KHTML, like Gecko) Chrome/19.0.1055.1 Safari/535.24"
+        }
         return headers
