@@ -50,7 +50,7 @@ def setConfig(baseDir, filename, log):
         log.error("配置文件读取失败,原因{}".format(e))
 
 
-async def client(session, url, sem, headers):
+async def client(session, headers, url, sem):
     # async with sem:
     try:
         async with session.get(url, headers=headers) as resp:
@@ -63,7 +63,7 @@ async def client(session, url, sem, headers):
         return {'status': False, 'data': None}
 
 
-async def productr(Headers, sem, urls, waitToAnalysis, log):
+async def productr(Headers, urls, sem, waitToAnalysis, log):
     async with aiohttp.ClientSession() as session:
         while True:
             try:
@@ -73,7 +73,7 @@ async def productr(Headers, sem, urls, waitToAnalysis, log):
                     webType = item[1]
                     url = item[0]
                     headers = Headers.build()
-                    result = await client(session, url, sem, headers)
+                    result = await client(session, headers, url, sem)
                     if result['status']:
                         waitToAnalysis.append({
                             'data': result['data'],
@@ -82,19 +82,20 @@ async def productr(Headers, sem, urls, waitToAnalysis, log):
                         log.debug('{}数据获取成功,已添加进队列待解析'.format(url))
                     else:
                         urls[url] = webType
-                        log.debug('url:{}抓取失败，返回队列等待重新抓取'.format(url))
+                        log.error('url:{}抓取失败，返回队列等待重新抓取'.format(url))
                         continue
                 # TODO: 处理任务结束
                 elif productr_switch:
                     log.debug('任务结束,停止爬取!')
                     break
                 else:
-                    await asyncio.sleep(2)
                     log.debug('url池为空，继续等待..')
+                    await asyncio.sleep(2)
                     continue
             except Exception as e:
                 log.error('爬取数据失败!url为{},原因是{}'.format(url, e))
-                urls.append({'data': url, 'type': webType})
+                # TODO: 添加到队列重新爬取
+                # urls.append({'data': url, 'type': webType})
                 continue
 
 
@@ -146,29 +147,30 @@ async def analysisr(waitToAnalysis, waitToWrite, urls, host):
             continue
 
 
-async def writer(waitToWrite, Headers):
-    # async with aiohttp.ClientSession as session:
+async def writer(waitToWrite, log):
     while True:
         try:
             if (len(waitToWrite) != 0):
+                # TODO: 处理重复和分类（文本（时间），图片， 视频）
                 item = waitToWrite.pop()
-                print(item)
                 if (item['type'] == 'article'):
                     async with aiofiles.open(item['name'] + '.txt', 'w+') as f:
                         await f.writelines(item['data'])
-                        # log.debug('{}写入文件完成!'.format(item['name']))
+                    log.debug('{}写入文件完成!'.format(item['name']))
                 else:
+                    # TODO： 爬取视频和图片
                     headers = Headers.build()
                     if (item['type'] == 'img'):
                         pass
                     elif (item['type'] == 'video'):
                         pass
             else:
+                log.debug('待写入队列为空，继续等待..')
                 await asyncio.sleep(2)
-                print('write继续')
                 continue
         except Exception as e:
-            # log.error('无法从队列获取数据,原因是{}'.format(e))
+            log.error('写入过程中报错,原因是{}'.format(e))
+            # TODO: 添加到队列重新写入
             continue
 
 
@@ -225,8 +227,8 @@ if __name__ == "__main__":
     tWriter.start()
     array1 = list()
     array2 = list()
-    asyncio.run_coroutine_threadsafe(productr(Headers, sem, urls, array1, log),
+    asyncio.run_coroutine_threadsafe(productr(Headers, urls, sem, array1, log),
                                      product_loop)
     asyncio.run_coroutine_threadsafe(analysisr(array1, array2, urls, host),
                                      analysis_loop)
-    asyncio.run_coroutine_threadsafe(writer(array2, Headers), write_loop)
+    asyncio.run_coroutine_threadsafe(writer(array2, log), write_loop)
