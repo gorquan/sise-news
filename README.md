@@ -5,6 +5,20 @@
 
 Linux(Ubuntu 18.04已通过)、Unix（未知）、Windows（不支持）
 
+python3(3.5以上)、 python2.7(不支持)
+
+##### 安装依赖
+
+``` shell
+pip3 install -r requirements.txt
+```
+
+##### 运行
+
+``` shell
+python3 main.py
+```
+
 ##### 采用的技术
 
 * aiohttp
