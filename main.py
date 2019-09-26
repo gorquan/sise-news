@@ -50,17 +50,16 @@ def setConfig(baseDir, filename, log):
         log.error("配置文件读取失败,原因{}".format(e))
 
 
-async def client(session, headers, url, sem):
-    # async with sem:
-    try:
-        async with session.get(url, headers=headers) as resp:
-            if resp.status in [200, 201]:
-                data = await resp.text()
-                # log.debug("网页{}爬取成功!".format(url))
-                return {'status': True, 'data': data}
-    except Exception as e:
-        # log.error('爬取网页失败!url为{},错误原因是{}'.format(url,e))
-        return {'status': False, 'data': None}
+async def client(session, headers, url, sem, log):
+    async with sem:
+        try:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status in [200, 201]:
+                    data = await resp.text()
+                    return {'status': True, 'data': data}
+        except Exception as e:
+            log.error('爬取网页失败!url为{},错误原因是{}'.format(url, e))
+            return {'status': False, 'data': None}
 
 
 async def productr(Headers, urls, sem, waitToAnalysis, log):
@@ -73,7 +72,7 @@ async def productr(Headers, urls, sem, waitToAnalysis, log):
                     webType = item[1]
                     url = item[0]
                     headers = Headers.build()
-                    result = await client(session, headers, url, sem)
+                    result = await client(session, headers, url, sem, log)
                     if result['status']:
                         waitToAnalysis.append({
                             'data': result['data'],
@@ -94,21 +93,18 @@ async def productr(Headers, urls, sem, waitToAnalysis, log):
                     continue
             except Exception as e:
                 log.error('爬取数据失败!url为{},原因是{}'.format(url, e))
-                # TODO: 添加到队列重新爬取
-                # urls.append({'data': url, 'type': webType})
+                if (url != None and webType != None):
+                    urls[url] = webType
                 continue
 
 
-async def analysisr(waitToAnalysis, waitToWrite, urls, host):
+async def analysisr(waitToAnalysis, waitToWrite, urls, host, log):
     while True:
         try:
             if (len(waitToAnalysis) != 0):
                 itemData = waitToAnalysis.pop()
-                # log.debug("内容{}提取成功,待处理..".format(itemData['data']))
-                source = BeautifulSoup(itemData['data'])
+                source = BeautifulSoup(itemData['data'], 'lxml')
                 if (itemData['type'] == 'article'):
-                    # TODO: 处理视频页面
-                    # TODO: 处理图片页面
                     # 处理文章页面
                     name = ((source.find(
                         'div', {'class': 'article-title'})).text).strip()
@@ -119,7 +115,13 @@ async def analysisr(waitToAnalysis, waitToWrite, urls, host):
                         'data': data,
                         'type': fileType
                     })
+                    log.debug('内容：{}解析成功！已添加到待写入队列'.format(name))
+                    # TODO：处理视频页面
+                    # TODO：处理图片页面
+                    # TODO：处理校报页面
+                    # TODO：处理专题页面
                 else:
+                    # TODO: 存在问题 126行
                     if (itemData['type'] == 'column'):
                         urlArray = ((source.find(
                             'a', {'class': 'end'}))['href']).split('/')
@@ -129,21 +131,21 @@ async def analysisr(waitToAnalysis, waitToWrite, urls, host):
                             url = 'http://' + host + '/cms/news/' + str(
                                 pageNum) + '/p/' + str(i) + '.html'
                             urls[url] = 'tof'
-                        # log.debug('网址添加完成!')
+                        log.debug('文章目录网址添加完成!')
                     elif (itemData['type'] == 'tof'):
-                        aritcles = source.find_all('h3', {
-                            'class':
-                            'list-title text-overflow margin-top-none'
-                        })
+                        aritcles = source.find_all(
+                            'h3',
+                            {'class': 'list-title text-overflow margin-top-none'})
                         for article in aritcles:
                             url = 'http://' + host + (article.a['href'])
                             urls[url] = 'article'
-                        # log.debug('网址添加完成!')
+                        log.debug('文章网址添加完成!')
             else:
+                log.debug('待解析队列为空，继续等待..')
                 await asyncio.sleep(2)
                 continue
         except Exception as e:
-            # log.error('从队列获取数据失败,原因是{}'.format(e))
+            log.error('数据解析过程中发生错误，原因是: {}, 异常行数{}'.format(e,e.__traceback__.tb_lineno))
             continue
 
 
@@ -159,7 +161,6 @@ async def writer(waitToWrite, log):
                     log.debug('{}写入文件完成!'.format(item['name']))
                 else:
                     # TODO： 爬取视频和图片
-                    headers = Headers.build()
                     if (item['type'] == 'img'):
                         pass
                     elif (item['type'] == 'video'):
@@ -175,11 +176,9 @@ async def writer(waitToWrite, log):
 
 
 # 定义每个线程中的协程
-# def main(func, loop, *args):
 def main(loop):
     # print(func)
     asyncio.set_event_loop(loop)
-    # asyncio.ensure_future(analysisr(loop, *args))
     loop.run_forever()
 
 
@@ -198,9 +197,10 @@ if __name__ == "__main__":
     # 未爬取url
     urls = dict()
     # 添加第一批url
-    # for i in range(1,12):
     for i in range(1, 12):
-        # http://news.sise.edu.cn/cms/news/1.html
+        # 目前只爬取文章，不爬取视频和图片
+        if (i in [[3,4,7,8]]):
+            continue
         urls['http://news.sise.edu.cn/cms/news/{}.html'.format(
             str(i))] = 'column'
     # 创建一个协程
@@ -227,8 +227,9 @@ if __name__ == "__main__":
     tWriter.start()
     array1 = list()
     array2 = list()
+    # 添加到协程
     asyncio.run_coroutine_threadsafe(productr(Headers, urls, sem, array1, log),
                                      product_loop)
-    asyncio.run_coroutine_threadsafe(analysisr(array1, array2, urls, host),
-                                     analysis_loop)
+    asyncio.run_coroutine_threadsafe(
+        analysisr(array1, array2, urls, host, log), analysis_loop)
     asyncio.run_coroutine_threadsafe(writer(array2, log), write_loop)
